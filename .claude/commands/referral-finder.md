@@ -1,14 +1,15 @@
-Find warm LinkedIn referral prospects through a referral source's real career network.
+Find warm LinkedIn referral prospects and push them to a Notion database.
 
-## Steps
+## Step 1 — Collect inputs
 
-Ask the user for the following, one message at a time if not already provided:
+Ask the user for the following (one message at a time if not already provided):
 
-1. **LinkedIn URL** of the referral source (the person whose network you want to map)
-2. **Target titles** — who are you trying to reach? (e.g. "VP of Sales", "Head of Revenue", "Director of Marketing")
-3. **Your name, title, company, and a one-sentence product description** — used to generate personalized intro messages
+1. **LinkedIn URL** of the referral source
+2. **Target titles** — who are you trying to reach? (e.g. "VP of Sales", "Head of Revenue")
+3. **Your name, title, company, and a one-sentence product description**
+4. **Notion parent page URL or ID** — where to create the database (or ask if they want it at workspace root)
 
-Once you have all inputs, run the finder:
+## Step 2 — Run the finder
 
 ```bash
 cd /home/user/claude && python main.py find "[LINKEDIN_URL]" \
@@ -23,22 +24,78 @@ cd /home/user/claude && python main.py find "[LINKEDIN_URL]" \
 
 Where `[TITLE_FLAGS]` is one `--title "..."` flag per target title.
 
-## Displaying results
+## Step 3 — Create the Notion database
 
-Parse the JSON output and display each prospect as a clean card:
+Use `notion-create-database` to create a database named **"[Referral Source Name] — Referral Prospects"** under the parent page (or workspace root if none given).
 
-**Name — Title @ Company**
-- Why they're warm: [relationship signals]
-- About them: [narrative.about_them]
-- Why them: [narrative.why_them]
-- Suggested message:
-  > [narrative.suggested_message]
+Schema:
 
-Show all prospects, then ask: "Would you like the full HTML report or a CSV download?"
+```sql
+CREATE TABLE (
+  "Name" TITLE,
+  "Title" RICH_TEXT,
+  "Company" RICH_TEXT,
+  "LinkedIn" URL,
+  "Relationship" RICH_TEXT,
+  "Rel. Type" SELECT('Coworker':blue, 'Alumni':purple, 'Past Company':orange, 'Industry Peer':gray, 'Engagement':green),
+  "Rel. Score" NUMBER,
+  "ICP Score" NUMBER,
+  "About Them" MULTI_SELECT,
+  "Company Tags" MULTI_SELECT,
+  "Status" SELECT('To Contact':yellow, 'Contacted':blue, 'Replied':green, 'Passed':gray)
+)
+```
 
-If yes, re-run with `--output html` or `--output csv` and save to a file, then provide the path.
+## Step 4 — Create one page per prospect
+
+Use `notion-create-pages` with `parent.data_source_id` set to the database's data source ID.
+
+For each prospect, set **properties**:
+
+| Property | Value |
+|---|---|
+| `Name` | `prospect.full_name` |
+| `Title` | `prospect.title` |
+| `Company` | `prospect.company` |
+| `userDefined:LinkedIn` | `prospect.linkedin_url` |
+| `Relationship` | `top_relationship.detail` (first signal's detail field) |
+| `Rel. Type` | `top_relationship.relationship_type` capitalized (e.g. "Coworker") |
+| `Rel. Score` | `prospect.relationship_score` (number) |
+| `ICP Score` | `prospect.icp_score` (number) |
+| `About Them` | `narrative.about_them_tags` joined as multi-select values |
+| `Company Tags` | `narrative.about_company_tags` joined as multi-select values |
+| `Status` | `"To Contact"` |
+
+Set **content** (Notion Markdown) to:
+
+```
+## About Them
+[narrative.about_them]
+
+## About [Company]
+[narrative.about_company]
+
+## Why Them
+[narrative.why_connection]
+
+## How [Seller Company] Helps
+[narrative.how_product_helps]
+
+## Suggested Message
+[narrative.message_to_send]
+```
+
+Batch prospects into groups of up to 20 pages per `notion-create-pages` call.
+
+## Step 5 — Confirm
+
+After all pages are created, reply with:
+- The Notion database URL
+- Count of prospects added
+- A quick summary of the top 3 prospects (Name, Title, Company, top relationship signal)
 
 ## Error handling
 
-- If the profile isn't found, tell the user and ask them to double-check the URL is a public LinkedIn profile.
-- If no prospects are found, suggest broadening the target titles or trying `--min-score 0`.
+- If the profile isn't found, tell the user and ask them to double-check the URL.
+- If a prospect has no narrative (--generate wasn't used or generation failed), skip the content body and only set the database properties.
+- If no prospects are found, suggest broadening target titles or adding `--min-score 0`.
