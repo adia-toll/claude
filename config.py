@@ -25,10 +25,13 @@ class Settings(BaseSettings):
     apollo_api_key: Optional[str] = None
     apollo_base_url: str = "https://api.apollo.io/api/v1"
 
+    # ── Anthropic (for AI narrative generation) ───────────────────────────────
+    anthropic_api_key: Optional[str] = None  # Uses ANTHROPIC_API_KEY env var by default
+
     # ── Behavior ──────────────────────────────────────────────────────────────
-    max_companies_to_search: int = 10   # Limit company searches to control API cost
+    max_companies_to_search: int = 10
     max_prospects_per_company: int = 25
-    min_relationship_score: float = 20.0  # Only return prospects above this threshold
+    min_relationship_score: float = 20.0
 
 
 @lru_cache

@@ -6,7 +6,7 @@ from datetime import date
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field
 
 
 class DateRange(BaseModel):
@@ -14,8 +14,6 @@ class DateRange(BaseModel):
     end: Optional[date] = None  # None = present
 
     def overlaps_with(self, other: "DateRange") -> bool:
-        """Check if two date ranges overlap (i.e., two people worked somewhere at the same time)."""
-        # If either end is None, treat as today
         a_end = self.end or date.today()
         b_end = other.end or date.today()
         a_start = self.start or date(1970, 1, 1)
@@ -23,12 +21,10 @@ class DateRange(BaseModel):
         return a_start <= b_end and b_start <= a_end
 
     def overlap_months(self, other: "DateRange") -> int:
-        """Return approximate months of overlap between two ranges."""
         a_end = self.end or date.today()
         b_end = other.end or date.today()
         a_start = self.start or date(1970, 1, 1)
         b_start = other.start or date(1970, 1, 1)
-
         overlap_start = max(a_start, b_start)
         overlap_end = min(a_end, b_end)
         if overlap_start >= overlap_end:
@@ -67,21 +63,45 @@ class ReferralSource(BaseModel):
     follower_count: Optional[int] = None
     connections_count: Optional[int] = None
 
+    @property
+    def first_name(self) -> str:
+        return self.full_name.split()[0] if self.full_name else ""
+
 
 class RelationshipType(str, Enum):
-    COWORKER = "coworker"          # Worked at the same company at the same time
-    ALUMNI = "alumni"              # Went to the same school
-    PAST_COMPANY = "past_company"  # Same company but different time period
-    ENGAGEMENT = "engagement"      # Public LinkedIn activity (liked/commented)
+    COWORKER = "coworker"
+    ALUMNI = "alumni"
+    PAST_COMPANY = "past_company"
+    ENGAGEMENT = "engagement"
     INDUSTRY_PEER = "industry_peer"
 
 
 class RelationshipSignal(BaseModel):
-    """Evidence that the referral source knows a prospect."""
     relationship_type: RelationshipType
     company_or_school: str
     overlap_months: int = 0
-    detail: str  # Human-readable explanation
+    detail: str
+
+
+class SellerContext(BaseModel):
+    """Who is asking for the intro and what they're selling."""
+    name: str
+    title: str
+    company: str
+    product_description: str = Field(
+        description="What the product does and who it's for — used to generate value prop copy"
+    )
+
+
+class ProspectNarrative(BaseModel):
+    """AI-generated narrative content for the referral brief."""
+    about_them_tags: list[str] = Field(description="1-2 short persona labels, e.g. '2nd-line Leader', 'RevOps / Sales Ops'")
+    about_them: str = Field(description="2-3 sentence description of who they are and what they care about")
+    about_company_tags: list[str] = Field(description="1 industry/category label, e.g. 'Event Tech', 'Intent Data'")
+    about_company: str = Field(description="3-4 sentences with specific metrics: funding, growth, competitive position")
+    why_connection: str = Field(description="1-2 sentences: the relationship thread + why they're a fit")
+    how_product_helps: str = Field(description="3-4 sentences: specific value prop tied to their current situation")
+    message_to_send: str = Field(description="Full intro message in the prescribed format")
 
 
 class ProspectMatch(BaseModel):
@@ -97,8 +117,11 @@ class ProspectMatch(BaseModel):
 
     # Relationship intelligence
     relationship_signals: list[RelationshipSignal] = Field(default_factory=list)
-    relationship_score: float = 0.0  # 0-100, higher = stronger relationship
-    icp_score: float = 0.0           # 0-100, how well they fit the ICP
+    relationship_score: float = 0.0
+    icp_score: float = 0.0
+
+    # AI-generated narrative (populated after generation step)
+    narrative: Optional[ProspectNarrative] = None
 
     @property
     def combined_score(self) -> float:
@@ -112,22 +135,20 @@ class ProspectMatch(BaseModel):
 
 
 class ICPCriteria(BaseModel):
-    """Ideal Customer Profile criteria to match prospects against."""
-    titles: list[str] = Field(default_factory=list, description="Job titles to target (supports partial match)")
-    industries: list[str] = Field(default_factory=list, description="Target industries")
-    company_sizes: list[str] = Field(
-        default_factory=list,
-        description="Employee count ranges: '1-10', '11-50', '51-200', '201-500', '501-1000', '1001-5000', '5001+'"
-    )
-    locations: list[str] = Field(default_factory=list, description="Cities, states, or countries")
-    keywords: list[str] = Field(default_factory=list, description="Keywords to match in title or description")
-    exclude_titles: list[str] = Field(default_factory=list, description="Titles to exclude")
+    """Ideal Customer Profile criteria."""
+    titles: list[str] = Field(default_factory=list)
+    industries: list[str] = Field(default_factory=list)
+    company_sizes: list[str] = Field(default_factory=list)
+    locations: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+    exclude_titles: list[str] = Field(default_factory=list)
 
 
 class ReferralFinderResult(BaseModel):
     """Full output of analyzing a referral source."""
     referral_source: ReferralSource
     icp_criteria: ICPCriteria
+    seller: Optional[SellerContext] = None
     prospects: list[ProspectMatch] = Field(default_factory=list)
     companies_searched: list[str] = Field(default_factory=list)
     total_candidates_evaluated: int = 0

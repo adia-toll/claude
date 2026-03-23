@@ -25,6 +25,7 @@ from models import (
     ProspectMatch,
     ReferralFinderResult,
     ReferralSource,
+    SellerContext,
     WorkExperience,
 )
 from relationship_analyzer import (
@@ -57,7 +58,12 @@ class ReferralFinder:
     def __exit__(self, *args):
         self.close()
 
-    def run(self, linkedin_url: str, icp: ICPCriteria) -> ReferralFinderResult:
+    def run(
+        self,
+        linkedin_url: str,
+        icp: ICPCriteria,
+        seller: Optional[SellerContext] = None,
+    ) -> ReferralFinderResult:
         errors: list[str] = []
 
         # ── Step 1: Fetch referral source profile ──────────────────────────
@@ -75,6 +81,7 @@ class ReferralFinder:
         result = ReferralFinderResult(
             referral_source=source,
             icp_criteria=icp,
+            seller=seller,
         )
 
         # ── Step 2: Fetch public posts for engagement signals ──────────────
