@@ -148,38 +148,22 @@ class ReferralFinder:
             except Exception as e:
                 errors.append(f"Apollo search failed for {job.company_name}: {e}")
 
-        # Fall back to Proxycurl employee search
-        if job.company_linkedin_id:
+        # Fall back to LinkedIn provider employee search
+        company_url = job.company_linkedin_id or self._linkedin.resolve_company_url(job.company_name)
+        if company_url:
             try:
                 keyword_regex = self._build_title_regex(icp.titles)
-                proxycurl_results = self._linkedin.search_company_employees(
-                    company_linkedin_url=job.company_linkedin_id,
+                provider_results = self._linkedin.search_company_employees(
+                    company_linkedin_url=company_url,
                     keyword_regex=keyword_regex,
                     page_size=self._settings.max_prospects_per_company,
                 )
-                for r in proxycurl_results:
+                for r in provider_results:
                     profile = r.get("profile") or r
                     candidates.append(self._normalize_proxycurl_person(profile))
-                console.log(f"  [dim]Proxycurl: {len(proxycurl_results)} candidates[/]")
+                console.log(f"  [dim]LinkedIn provider: {len(provider_results)} candidates[/]")
             except Exception as e:
-                errors.append(f"Proxycurl employee search failed for {job.company_name}: {e}")
-        else:
-            # Resolve company URL then search
-            try:
-                company_url = self._linkedin.resolve_company_url(job.company_name)
-                if company_url:
-                    keyword_regex = self._build_title_regex(icp.titles)
-                    proxycurl_results = self._linkedin.search_company_employees(
-                        company_linkedin_url=company_url,
-                        keyword_regex=keyword_regex,
-                        page_size=self._settings.max_prospects_per_company,
-                    )
-                    for r in proxycurl_results:
-                        profile = r.get("profile") or r
-                        candidates.append(self._normalize_proxycurl_person(profile))
-            except Exception as e:
-                errors.append(f"Could not resolve/search {job.company_name}: {e}")
-
+                errors.append(f"LinkedIn employee search failed for {job.company_name}: {e}")
         return candidates
 
     def _build_signals(

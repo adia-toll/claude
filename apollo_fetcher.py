@@ -1,11 +1,18 @@
 """
 Apollo.io API integration for prospect search and enrichment.
 
-Apollo docs: https://apolloio.github.io/apollo-api-docs/
+Apollo docs: https://docs.apollo.io/reference/people-api-search
+
+Key facts:
+- Auth: x-api-key header (NOT in request body)
+- Search endpoint (mixed_people/api_search): FREE, no credits consumed
+- Enrichment endpoint (people/match): costs credits
+- Employee history is included in search results — no need to enrich just for work history
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 import httpx
@@ -15,7 +22,27 @@ from config import get_settings
 from models import ICPCriteria
 
 
-# Map human-readable company sizes to Apollo's num_employees_ranges format
+# Apollo seniority level values
+SENIORITY_MAP = {
+    "vp": "vp",
+    "vice president": "vp",
+    "director": "director",
+    "manager": "manager",
+    "head": "director",
+    "chief": "c_suite",
+    "ceo": "c_suite",
+    "cto": "c_suite",
+    "coo": "c_suite",
+    "cfo": "c_suite",
+    "founder": "founder",
+    "co-founder": "founder",
+    "partner": "partner",
+    "senior": "senior",
+    "lead": "senior",
+    "principal": "senior",
+}
+
+# Apollo company size ranges: "min,max" strings
 COMPANY_SIZE_MAP = {
     "1-10": "1,10",
     "11-50": "11,50",
@@ -27,16 +54,35 @@ COMPANY_SIZE_MAP = {
 }
 
 
+def _extract_seniorities(titles: list[str]) -> list[str]:
+    """Infer Apollo seniority levels from ICP title strings."""
+    seniorities = set()
+    for title in titles:
+        lower = title.lower()
+        for keyword, seniority in SENIORITY_MAP.items():
+            if keyword in lower:
+                seniorities.add(seniority)
+    return list(seniorities)
+
+
 class ApolloFetcher:
     def __init__(self):
         settings = get_settings()
         if not settings.apollo_api_key:
             raise ValueError(
-                "APOLLO_API_KEY is not set. Get one at https://app.apollo.io/#/settings/integrations/api"
+                "APOLLO_API_KEY is not set. "
+                "Get one at https://app.apollo.io/#/settings/integrations/api"
             )
-        self._api_key = settings.apollo_api_key
-        self._base_url = settings.apollo_base_url
-        self._client = httpx.Client(timeout=30.0)
+        # Apollo auth is via header, not request body
+        self._client = httpx.Client(
+            headers={
+                "x-api-key": settings.apollo_api_key,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            base_url=settings.apollo_base_url,
+            timeout=30.0,
+        )
 
     def close(self):
         self._client.close()
@@ -48,10 +94,12 @@ class ApolloFetcher:
         self.close()
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-    def _post(self, path: str, body: dict) -> dict:
-        url = f"{self._base_url}{path}"
-        body["api_key"] = self._api_key
-        response = self._client.post(url, json=body)
+    def _post(self, path: str, params: dict) -> dict:
+        """
+        Apollo's search API uses query parameters (not JSON body) for filters.
+        The endpoint is FREE and does not consume credits.
+        """
+        response = self._client.post(path, params=params)
         response.raise_for_status()
         return response.json()
 
@@ -64,44 +112,59 @@ class ApolloFetcher:
     ) -> list[dict]:
         """
         Search Apollo for people at a specific company matching ICP criteria.
-        Returns raw Apollo person objects.
+
+        Uses GET-style query params (Apollo's array filter convention).
+        Returns raw Apollo person objects including employment_history.
+        Does NOT consume credits.
         """
-        body: dict[str, Any] = {
-            "page": page,
-            "per_page": min(per_page, 100),
-            "organization_names": [company_name],
-        }
+        # Build flat query params — Apollo uses repeated keys for arrays
+        params: list[tuple[str, Any]] = [
+            ("organization_names[]", company_name),
+            ("page", page),
+            ("per_page", min(per_page, 100)),
+        ]
 
-        if icp.titles:
-            body["titles"] = icp.titles
+        for title in icp.titles:
+            params.append(("person_titles[]", title))
 
-        if icp.industries:
-            body["organization_industry_tag_ids"] = []
-            body["q_organization_industry_tags"] = icp.industries
+        for industry in icp.industries:
+            params.append(("q_organization_industry_tag_ids[]", industry))
 
-        if icp.company_sizes:
-            body["organization_num_employees_ranges"] = [
-                COMPANY_SIZE_MAP[s] for s in icp.company_sizes if s in COMPANY_SIZE_MAP
-            ]
+        for size in icp.company_sizes:
+            mapped = COMPANY_SIZE_MAP.get(size)
+            if mapped:
+                params.append(("organization_num_employees_ranges[]", mapped))
 
-        if icp.locations:
-            body["person_locations"] = icp.locations
+        for loc in icp.locations:
+            params.append(("person_locations[]", loc))
+
+        for kw in icp.keywords:
+            params.append(("keywords[]", kw))
+
+        # Infer seniority levels from title strings to narrow results
+        seniorities = _extract_seniorities(icp.titles)
+        for s in seniorities:
+            params.append(("person_seniorities[]", s))
 
         try:
-            data = self._post("/mixed_people/search", body)
+            data = self._post("/mixed_people/api_search", dict(params))
             return data.get("people") or []
         except httpx.HTTPStatusError as e:
             if e.response.status_code in (404, 422):
                 return []
             raise
 
-    def enrich_person(self, linkedin_url: str) -> Optional[dict]:
-        """Enrich a person profile using their LinkedIn URL."""
+    def enrich_person(self, apollo_id: str) -> Optional[dict]:
+        """
+        Enrich a person by Apollo ID to get email/phone.
+        Costs credits — use sparingly, only for high-scoring prospects.
+        """
         try:
-            data = self._post(
+            response = self._client.post(
                 "/people/match",
-                {"linkedin_url": linkedin_url, "reveal_personal_emails": False},
+                params={"id": apollo_id, "reveal_personal_emails": "false"},
             )
-            return data.get("person")
+            response.raise_for_status()
+            return response.json().get("person")
         except httpx.HTTPStatusError:
             return None
