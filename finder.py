@@ -16,7 +16,6 @@ from typing import Optional
 
 from rich.console import Console
 
-from apollo_fetcher import ApolloFetcher
 from config import get_settings
 from linkedin_fetcher import LinkedInFetcher
 from models import (
@@ -43,14 +42,9 @@ class ReferralFinder:
     def __init__(self):
         self._settings = get_settings()
         self._linkedin = LinkedInFetcher()
-        self._apollo: Optional[ApolloFetcher] = None
-        if self._settings.apollo_api_key:
-            self._apollo = ApolloFetcher()
 
     def close(self):
         self._linkedin.close()
-        if self._apollo:
-            self._apollo.close()
 
     def __enter__(self):
         return self
@@ -137,40 +131,19 @@ class ReferralFinder:
     def _search_company(
         self, job: WorkExperience, icp: ICPCriteria, errors: list[str]
     ) -> list[dict]:
-        """Search for ICP prospects at a given company."""
+        """Search for ICP prospects at a given company using PDL (free)."""
         candidates: list[dict] = []
-
-        # Try Apollo first (richer search, cheaper per call)
-        if self._apollo:
-            try:
-                apollo_results = self._apollo.search_people_at_company(
-                    company_name=job.company_name,
-                    icp=icp,
-                    per_page=self._settings.max_prospects_per_company,
-                )
-                for r in apollo_results:
-                    candidates.append(self._normalize_apollo_person(r))
-                console.log(f"  [dim]Apollo: {len(apollo_results)} candidates[/]")
-                return candidates
-            except Exception as e:
-                errors.append(f"Apollo search failed for {job.company_name}: {e}")
-
-        # Fall back to LinkedIn provider employee search
-        company_url = job.company_linkedin_id or self._linkedin.resolve_company_url(job.company_name)
-        if company_url:
-            try:
-                keyword_regex = self._build_title_regex(icp.titles)
-                provider_results = self._linkedin.search_company_employees(
-                    company_linkedin_url=company_url,
-                    keyword_regex=keyword_regex,
-                    page_size=self._settings.max_prospects_per_company,
-                )
-                for r in provider_results:
-                    profile = r.get("profile") or r
-                    candidates.append(self._normalize_proxycurl_person(profile))
-                console.log(f"  [dim]LinkedIn provider: {len(provider_results)} candidates[/]")
-            except Exception as e:
-                errors.append(f"LinkedIn employee search failed for {job.company_name}: {e}")
+        try:
+            results = self._linkedin.search_company_employees(
+                company_name=job.company_name,
+                titles=icp.titles,
+                per_page=self._settings.max_prospects_per_company,
+            )
+            for r in results:
+                candidates.append(self._normalize_pdl_person(r))
+            console.log(f"  [dim]PDL: {len(results)} candidates[/]")
+        except Exception as e:
+            errors.append(f"PDL search failed for {job.company_name}: {e}")
         return candidates
 
     def _build_signals(
@@ -286,6 +259,43 @@ class ReferralFinder:
             ],
             "education": [
                 {"school": e.get("school") or ""}
+                for e in (p.get("education") or [])
+            ],
+        }
+
+    @staticmethod
+    def _normalize_pdl_person(p: dict) -> dict:
+        """Normalize PDL person search result to our internal format."""
+        exp = p.get("experience") or []
+        current = next((e for e in exp if e.get("is_primary")), None)
+        company_size = _bucket_employees(
+            int(p.get("job_company_employee_count") or 0)
+        )
+        profiles = p.get("profiles") or []
+        linkedin_url = next(
+            (pr.get("url") for pr in profiles if "linkedin.com" in (pr.get("url") or "")),
+            None,
+        )
+        return {
+            "full_name": p.get("full_name") or "",
+            "title": p.get("job_title") or (current or {}).get("title") or p.get("headline") or "",
+            "company": p.get("job_company_name") or (current or {}).get("company", {}).get("name") or "",
+            "company_size": company_size,
+            "industry": p.get("industry") or "",
+            "location": p.get("location_name") or "",
+            "email": p.get("work_email") or p.get("personal_emails", [None])[0],
+            "linkedin_url": linkedin_url or "",
+            "work_history": [
+                {
+                    "company_name": (e.get("company") or {}).get("name") or "",
+                    "title": e.get("title") or "",
+                    "start_year": str(e["start_date"]["year"]) if e.get("start_date", {}).get("year") else None,
+                    "end_year": str(e["end_date"]["year"]) if e.get("end_date", {}).get("year") else None,
+                }
+                for e in exp
+            ],
+            "education": [
+                {"school": (e.get("school") or {}).get("name") or ""}
                 for e in (p.get("education") or [])
             ],
         }

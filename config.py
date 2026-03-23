@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     # "netrows"    — Paid. https://netrows.com
     # "pdl"        — Paid. https://peopledatalabs.com
     # "brightdata" — Paid. https://brightdata.com
-    linkedin_provider: str = "apollo"
+    linkedin_provider: str = "pdl"
 
     netrows_api_key: Optional[str] = None
     pdl_api_key: Optional[str] = None

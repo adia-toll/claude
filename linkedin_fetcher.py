@@ -238,8 +238,35 @@ class _PDLFetcher:
     def resolve_company_url(self, company_name: str) -> Optional[str]:
         return None  # PDL does not provide LinkedIn company URL resolution
 
-    def search_company_employees(self, *args, **kwargs) -> list[dict]:
-        return []  # Use Apollo for this
+    def search_company_employees(
+        self,
+        company_name: str,
+        titles: list[str],
+        per_page: int = 25,
+    ) -> list[dict]:
+        """
+        Search PDL for people at a company matching given titles.
+        Free tier: 1 credit per record returned (1,000 credits/month free).
+        """
+        title_filters = [{"match": {"job_title": t}} for t in titles] if titles else []
+        query: dict = {
+            "bool": {
+                "must": [{"term": {"job_company_name": company_name.lower()}}],
+            }
+        }
+        if title_filters:
+            query["bool"]["should"] = title_filters
+            query["bool"]["minimum_should_match"] = 1
+
+        try:
+            resp = self._client.post(
+                f"{self.BASE}/person/search",
+                json={"query": query, "size": per_page, "pretty": False},
+            )
+            resp.raise_for_status()
+            return resp.json().get("data") or []
+        except httpx.HTTPStatusError:
+            return []
 
     def fetch_person_posts(self, linkedin_url: str) -> list[dict]:
         return []  # PDL does not provide post data
