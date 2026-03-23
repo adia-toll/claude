@@ -126,6 +126,70 @@ The message_to_send must:
 - Be ~4-5 sentences total, warm and direct"""
 
 
+class GeminiGenerator:
+    """
+    FREE narrative generator using Google Gemini Flash.
+    Free tier: 1,500 requests/day, 15 RPM.
+    Get a key at https://aistudio.google.com/apikey
+    """
+
+    def __init__(self):
+        from google import genai
+        from google.genai import types as gtypes
+        settings = get_settings()
+        if not settings.google_api_key:
+            import os
+            key = os.environ.get("GOOGLE_API_KEY")
+            if not key:
+                raise ValueError(
+                    "GOOGLE_API_KEY is required for --generate. "
+                    "Get a free key at https://aistudio.google.com/apikey"
+                )
+        else:
+            key = settings.google_api_key
+        self._client = genai.Client(api_key=key)
+        self._gtypes = gtypes
+
+    def generate(
+        self,
+        prospect: ProspectMatch,
+        source: ReferralSource,
+        seller: SellerContext,
+    ) -> Optional[ProspectNarrative]:
+        prompt = SYSTEM_PROMPT + "\n\n" + _build_prompt(prospect, source, seller)
+        try:
+            response = self._client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt,
+                config=self._gtypes.GenerateContentConfig(
+                    response_mime_type="application/json",
+                ),
+            )
+            data = json.loads(response.text.strip())
+            return ProspectNarrative(**data)
+        except (json.JSONDecodeError, Exception) as e:
+            console.log(f"[yellow]Generation failed for {prospect.full_name}: {e}[/]")
+            return None
+
+    def generate_batch(
+        self,
+        prospects: list[ProspectMatch],
+        source: ReferralSource,
+        seller: SellerContext,
+    ) -> list[ProspectMatch]:
+        updated = []
+        for i, prospect in enumerate(prospects, 1):
+            console.log(
+                f"[cyan]Generating brief {i}/{len(prospects)}:[/] {prospect.full_name} "
+                f"@ {prospect.company}"
+            )
+            narrative = self.generate(prospect, source, seller)
+            if narrative:
+                prospect = prospect.model_copy(update={"narrative": narrative})
+            updated.append(prospect)
+        return updated
+
+
 class NarrativeGenerator:
     def __init__(self):
         self._client = anthropic.Anthropic()
@@ -181,3 +245,14 @@ class NarrativeGenerator:
                 prospect = prospect.model_copy(update={"narrative": narrative})
             updated.append(prospect)
         return updated
+
+
+def create_generator():
+    """
+    Return the right generator based on AI_PROVIDER setting.
+    Defaults to Gemini (free). Set AI_PROVIDER=anthropic for Claude.
+    """
+    settings = get_settings()
+    if settings.ai_provider == "anthropic":
+        return NarrativeGenerator()
+    return GeminiGenerator()

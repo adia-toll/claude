@@ -30,7 +30,7 @@ from rich.console import Console
 
 from config import get_settings
 from finder import ReferralFinder
-from generator import NarrativeGenerator
+from generator import create_generator
 from models import ICPCriteria, SellerContext
 from report import export_csv, export_html, export_json, print_result
 
@@ -125,10 +125,14 @@ def find(
         err.print("[red]--generate requires --seller-name, --seller-title, --seller-company, and --product[/]")
         raise typer.Exit(1)
 
-    if generate and not settings.anthropic_api_key:
+    if generate:
         import os
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            err.print("[red]--generate requires ANTHROPIC_API_KEY to be set[/]")
+        needs_gemini = settings.ai_provider != "anthropic"
+        if needs_gemini and not settings.google_api_key and not os.environ.get("GOOGLE_API_KEY"):
+            err.print("[red]--generate requires GOOGLE_API_KEY (free at aistudio.google.com/apikey)[/]")
+            raise typer.Exit(1)
+        if not needs_gemini and not settings.anthropic_api_key and not os.environ.get("ANTHROPIC_API_KEY"):
+            err.print("[red]AI_PROVIDER=anthropic requires ANTHROPIC_API_KEY[/]")
             raise typer.Exit(1)
 
     # ── Find prospects ────────────────────────────────────────────────────────
@@ -152,7 +156,7 @@ def find(
             f"\n[bold cyan]Generating briefs for {len(result.prospects)} prospects...[/]"
             " (uses Claude Opus 4.6)\n"
         )
-        gen = NarrativeGenerator()
+        gen = create_generator()
         result.prospects = gen.generate_batch(
             result.prospects, result.referral_source, seller
         )
@@ -188,10 +192,14 @@ def config_check():
     else:
         err.print("[yellow]·[/] APOLLO_API_KEY not set (optional but recommended)")
 
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        err.print("[green]✓[/] ANTHROPIC_API_KEY is set (required for --generate)")
+    import os
+    if os.environ.get("GOOGLE_API_KEY") or settings.google_api_key:
+        err.print("[green]✓[/] GOOGLE_API_KEY is set (free narrative generation with Gemini)")
     else:
-        err.print("[yellow]·[/] ANTHROPIC_API_KEY not set (required only for --generate)")
+        err.print("[yellow]·[/] GOOGLE_API_KEY not set (free at aistudio.google.com/apikey — needed for --generate)")
+
+    if os.environ.get("ANTHROPIC_API_KEY") or settings.anthropic_api_key:
+        err.print("[green]✓[/] ANTHROPIC_API_KEY is set (set AI_PROVIDER=anthropic to use Claude instead of Gemini)")
 
 
 if __name__ == "__main__":

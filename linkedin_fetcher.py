@@ -303,19 +303,109 @@ class _BrightDataFetcher:
         self._client.close()
 
 
+class _ApolloProfileFetcher:
+    """
+    FREE LinkedIn profile lookup via Apollo's search endpoint.
+    Uses employment_history from Apollo's person data to build a ReferralSource.
+    No API credits consumed — uses the free mixed_people/api_search endpoint.
+    """
+
+    def __init__(self, api_key: str):
+        # Import here to avoid circular dependency
+        from apollo_fetcher import ApolloFetcher
+        self._apollo = ApolloFetcher()
+
+    def fetch_profile(self, url: str) -> ReferralSource:
+        from apollo_fetcher import ApolloFetcher
+        apollo = self._apollo
+
+        person = apollo.find_person(url)
+        if not person:
+            # Try extracting the slug from the URL and search by name
+            raise RuntimeError(
+                f"Could not find this person on Apollo. "
+                f"Try LINKEDIN_PROVIDER=netrows/pdl for direct profile lookup."
+            )
+        return self._parse(url, person)
+
+    def resolve_company_url(self, company_name: str) -> Optional[str]:
+        return None  # Apollo doesn't provide LinkedIn company URLs
+
+    def search_company_employees(self, *args, **kwargs) -> list[dict]:
+        return []  # Handled directly by ApolloFetcher in finder.py
+
+    def fetch_person_posts(self, linkedin_url: str) -> list[dict]:
+        return []  # Apollo doesn't provide post data
+
+    def close(self):
+        self._apollo.close()
+
+    @staticmethod
+    def _parse(url: str, person: dict) -> ReferralSource:
+        """Convert an Apollo person dict into a ReferralSource."""
+        org = person.get("organization") or {}
+
+        work_history = []
+        for emp in person.get("employment_history") or []:
+            company = emp.get("organization_name") or ""
+            title = emp.get("title") or ""
+            if not company or not title:
+                continue
+            starts_at = _parse_date(emp.get("start_date"))
+            ends_at = _parse_date(emp.get("end_date"))
+            if emp.get("current"):
+                ends_at = None
+            work_history.append(WorkExperience(
+                company_name=company,
+                title=title,
+                date_range=DateRange(start=starts_at, end=ends_at),
+            ))
+
+        education = []
+        for edu in person.get("education_history") or []:
+            school = edu.get("school_name") or ""
+            if school:
+                education.append(Education(
+                    school=school,
+                    degree=edu.get("degree"),
+                    field_of_study=edu.get("field_of_study"),
+                    date_range=DateRange(),
+                ))
+
+        current = next((e for e in work_history if e.date_range.end is None), None)
+
+        return ReferralSource(
+            linkedin_url=url,
+            full_name=person.get("name") or f"{person.get('first_name','')} {person.get('last_name','')}".strip(),
+            headline=person.get("headline"),
+            current_company=current.company_name if current else (org.get("name") or person.get("organization_name")),
+            current_title=current.title if current else person.get("title"),
+            location=person.get("city") or person.get("state") or "",
+            work_history=work_history,
+            education=education,
+        )
+
+
 # ── Public interface ──────────────────────────────────────────────────────────
 
 class LinkedInFetcher:
     """
     Provider-agnostic LinkedIn data fetcher.
     Selects the backend based on LINKEDIN_PROVIDER env var.
+
+    Default (free): LINKEDIN_PROVIDER=apollo uses Apollo's free search tier.
     """
 
     def __init__(self):
         settings = get_settings()
         provider = settings.linkedin_provider.lower()
 
-        if provider == "netrows":
+        if provider == "apollo":
+            if not settings.apollo_api_key:
+                raise ValueError("APOLLO_API_KEY is required (free at apollo.io)")
+            self._backend = _ApolloProfileFetcher(settings.apollo_api_key)
+
+        elif provider == "netrows":
             if not settings.netrows_api_key:
                 raise ValueError("NETROWS_API_KEY is required when LINKEDIN_PROVIDER=netrows")
             self._backend = _NetrowsFetcher(settings.netrows_api_key)

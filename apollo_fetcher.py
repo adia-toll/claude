@@ -154,6 +154,38 @@ class ApolloFetcher:
                 return []
             raise
 
+    def find_person(self, linkedin_url: str) -> Optional[dict]:
+        """
+        Look up a person by LinkedIn URL using the free search endpoint.
+        Returns a raw Apollo person object with employment_history, or None.
+        Does NOT consume credits.
+        """
+        try:
+            data = self._post("/mixed_people/api_search", {
+                "linkedin_url": linkedin_url,
+                "per_page": 1,
+            })
+            people = data.get("people") or []
+            return people[0] if people else None
+        except httpx.HTTPStatusError:
+            return None
+
+    def find_person_by_name(self, name: str, company: str) -> Optional[dict]:
+        """
+        Look up a person by name + company when LinkedIn URL lookup fails.
+        Does NOT consume credits.
+        """
+        try:
+            data = self._post("/mixed_people/api_search", {
+                "person_names[]": name,
+                "organization_names[]": company,
+                "per_page": 1,
+            })
+            people = data.get("people") or []
+            return people[0] if people else None
+        except httpx.HTTPStatusError:
+            return None
+
     def enrich_person(self, apollo_id: str) -> Optional[dict]:
         """
         Enrich a person by Apollo ID to get email/phone.
