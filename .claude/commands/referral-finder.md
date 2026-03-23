@@ -94,6 +94,12 @@ After all pages are created, reply with:
 - Count of prospects added
 - A quick summary of the top 3 prospects (Name, Title, Company, top relationship signal)
 
+Then add these reminders:
+
+> **Before you go:**
+> - The database is private — open it in Notion and click **Share** to invite teammates or publish it.
+> - Review each **Suggested Message** before sending. The AI writes a strong first draft, but personalize it with anything you know about the person that isn't in their LinkedIn profile.
+
 ## Error handling
 
 - If the profile isn't found, tell the user and ask them to double-check the URL.
