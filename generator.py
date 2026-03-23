@@ -25,15 +25,15 @@ from models import (
 
 console = Console(stderr=True)
 
-SYSTEM_PROMPT = """You are a B2B sales intelligence analyst writing referral briefs for warm introductions.
+SYSTEM_PROMPT = """You are a B2B sales intelligence analyst preparing a referral dossier FOR the referral source.
 
-Your job: given a referral source, a prospect, and a product being sold, generate specific and compelling content for each prospect — not generic filler.
+This document is designed to make it effortless for the referral source to make warm intros. Every field is written for them, not about them. The "Message to Send" is the exact text they copy and paste — addressed to the prospect, in the referral source's voice, introducing the seller.
 
 Rules:
 - About the company: use specific metrics (funding round + amount, growth %, headcount, customer count, ARR if known, analyst recognition like Gartner/Forrester). Use your knowledge of these companies.
-- Relationship context: state it precisely (e.g., "You two were both at Klaviyo, his RVP tenure overlaps your rep tenure" or "Fellow Babson alum, 90 days into a new CRO role")
-- How product helps: tie it to their specific role + company situation RIGHT NOW. What's their actual challenge?
-- Message: write it as if the referral source is sending it. Warm, direct, not salesy. The referral source introduces the seller.
+- Relationship context: state it precisely and from the referral source's perspective (e.g., "You two were both at Klaviyo, his RVP tenure overlaps your rep tenure" or "Fellow Babson alum, 90 days into a new CRO role, he's actively building the stack right now")
+- How product helps: tie it to the prospect's specific role + company situation RIGHT NOW. What's their actual challenge?
+- Message: written in the referral source's voice, addressed TO the prospect (starts with the prospect's first name), introducing the seller. Warm, direct, not salesy.
 - Always respond with valid JSON only — no markdown fences, no extra text."""
 
 
@@ -108,7 +108,7 @@ Company: {seller.company}
   "about_company": "<3-4 sentences: what they do, specific metrics (funding, growth, ARR, customers, analysts), competitive position>",
   "why_connection": "<1-2 sentences: the specific relationship thread PLUS why they're a fit for the product>",
   "how_product_helps": "<3-4 sentences: their specific challenge right now + exactly how {seller.company} solves it>",
-  "message_to_send": "{source.first_name} → {prospect.full_name}\\n{source.first_name}! <message body ending with 'You two should talk. ✌'>"
+  "message_to_send": "{source.first_name} → {prospect.full_name}\\n[prospect first name]! <message body ending with 'You two should talk. ✌'>"
 }}
 
 For persona tags use labels like: "2nd-line Leader", "RevOps / Sales Ops", "CRO", "Founder", "6x Exits", "Podcaster", "MarTech", "VP of Sales", "Sales Ops", "GTM Leader", "Enterprise AE", "SDR Leader", "CS Leader"
@@ -116,10 +116,12 @@ For persona tags use labels like: "2nd-line Leader", "RevOps / Sales Ops", "CRO"
 For industry tags use labels like: "Event Tech", "Intent Data", "Vertical SaaS", "eCommerce / Logistics", "AI / AEO", "HR Tech", "Sales Tech", "RevOps", "FinTech", "MarTech", "Dev Tools"
 
 The message_to_send must:
-- Start with "{source.first_name}!"
-- Reference the relationship naturally (don't say "I noticed you worked together" — just reference it)
+- Header line: "{source.first_name} → {prospect.full_name}" (shows who is sending to whom)
+- Body starts with "[prospect's first name]!" — addressing the PROSPECT, not the referral source
+- Written in the REFERRAL SOURCE's voice (they are the one sending it)
+- Reference the relationship naturally (don't say "I noticed you worked together" — just state it)
 - Introduce {seller.name} as {seller.title} at {seller.company} with a compelling one-line description
-- Tie it to something specific about the prospect's role or company situation
+- Tie it to something specific about the prospect's role or company situation right now
 - End with exactly: "You two should talk. ✌"
 - Be ~4-5 sentences total, warm and direct"""
 
